@@ -1,6 +1,6 @@
 """
 filename: lucas_search.py
-Author: Diego Zuniga
+Author: Diego Zuniga and Alex Carrasco
 
 Solves (partially, for now) the Lucas and Prescott Search model
 
@@ -185,6 +185,10 @@ class LucasSearch(object):
 			x = np.linspace(0, 2, 100)
 			fx = (1/len(x))*np.ones(len(x))
 			def Avxx(y, a):
+				""" 
+				Computes the expected value of the value function using
+				the predefined distribution.
+				"""
 				#Z: I should make this faster. No loops. Use arrays themselves. DONE
 				values = np.asarray([np.empty(len(self.states))]*len(x)) 
 				for i, x_val in enumerate(x):
