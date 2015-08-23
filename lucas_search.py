@@ -2,7 +2,9 @@
 filename: lucas_search.py
 Author: Diego Zuniga and Alex Carrasco
 
-Solves (partially, for now) the Lucas and Prescott Search model
+Solves partially the Lucas and Prescott Search model. By partially, I mean 
+it is the solution for one of the markets in the economy that takes economy
+variables as given. 
 
 Following (1974) Equilibrium Search and Unemployment - Journal oF Economic Theory
 by Robert E. Lucas, Jr. and Edward C. Prescott
@@ -13,16 +15,13 @@ by Robert E. Lucas, Jr. and Edward C. Prescott
 
 #Z: I think we don't need to do interpolation in the bellman operator. I'll simplify
 #	the code later. 
-#Z:	Also, there is probably a more Pythonic way to compute employment
-#	like using n_eq[j, :]. Will check later.
-#Z:	I still need to add a description for the methods of the class.
 
 from __future__ import division
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.optimize import fsolve
-#from compute_fp import compute_fixed_point
-
+from compute_fp import compute_fixed_point
+from itertools import izip
 
 class LucasSearch(object):
 	'''
@@ -96,7 +95,7 @@ class LucasSearch(object):
 
 		return Tv
 
-	def unconstrained_employment(self, v):
+	def unconstrained_employment(self, v=None):
 		"""
 		Computes the (unconstrained) optimal level of employment
 		in a market for every possible state of demand.  
@@ -113,24 +112,23 @@ class LucasSearch(object):
         	The number of employed workers for each state of demand
 
 		"""
+		if v == None:
+			v = np.asarray([np.zeros(len(self.grid))]*len(self.states))
+			v = compute_fixed_point(self.bellman_operator, v, verbose=0, max_iter=30)
+
 		Av = [InterpolatedUnivariateSpline(self.grid, v[i], k=3) for i in xrange(len(self.states))]
 		Avx = lambda y: np.asarray([function(y) for function in Av])
-		
-		n_hat = np.empty(len(self.states))
 		
 		#The zero in this function is the level of employment at which
 		#workers are indifferent between leaving and staying.
 		function = [lambda n, s=state: self.labour_demand(n, s) + 
 					self.beta*np.dot(self.transition[j], Avx(n)) - 
 					self.lamb for j, state in enumerate(self.states)] 
-			
-		for j in xrange(len(self.states)):
-			n_solve = fsolve(function[j], self.grid.max()/2) #unconstrained equilibrium labour
-			n_hat[j] = n_solve
-			
+		
+		n_hat = [int(fsolve(function[j], self.grid.max()/2)) for j in xrange(len(self.states))]
 		return n_hat
 
-	def compute_employment(self, v):
+	def compute_employment(self, v=None):
 		"""
 		Computes the level of employment for every possible
 		workforce and state of demand  
@@ -148,16 +146,20 @@ class LucasSearch(object):
         	state of demand
 
 		"""
+		if v == None:
+			v = np.asarray([np.zeros(len(self.grid))]*len(self.states))
+			v = compute_fixed_point(self.bellman_operator, v, verbose=0, max_iter=30)
+
 		n_hat = self.unconstrained_employment(v)
 		n_eq = np.asarray([np.empty(len(self.grid))]*len(self.states))
 				
 		#Imposes the workforce constraint if it is binding
 		for j in xrange(len(self.states)):
-			n_eq[j] = np.minimum(n_hat[j], self.grid)
+			n_eq[j] = np.maximum(0,np.minimum(n_hat[j], self.grid))
 					
 		return n_eq
 
-	def next_workforce(self, v, stochastic = False):
+	def next_workforce(self, v=None, stochastic = False):
 		"""
 		Computes the next period workforce given current workforce
 		and state of demand
@@ -175,6 +177,10 @@ class LucasSearch(object):
         	and state of demand
 
 		"""
+		if v == None:
+			v = np.asarray([np.zeros(len(self.grid))]*len(self.states))
+			v = compute_fixed_point(self.bellman_operator, v, verbose=0, max_iter=30)
+		
 		Av = [InterpolatedUnivariateSpline(self.grid, v[i], k=3) for i in xrange(len(self.states))]
 		Avx = lambda y: np.asarray([function(y) for function in Av])
 		
@@ -189,11 +195,8 @@ class LucasSearch(object):
 				Computes the expected value of the value function using
 				the predefined distribution.
 				"""
-				#Z: I should make this faster. No loops. Use arrays themselves. DONE
-				values = np.asarray([np.empty(len(self.states))]*len(x)) 
-				for i, x_val in enumerate(x):
-					values[i] = Avx(y + a*x_val)*fx[i]
-				return values.sum(axis = 0)
+				values = [Avx(y + a*x_val)*fx_val for x_val, fx_val in izip(x, fx)] 
+				return np.asarray(values).sum(axis=0)
 				
 		for j, state in enumerate(self.states):
 			for i, y in enumerate(self.grid):
@@ -212,8 +215,36 @@ class LucasSearch(object):
 					next_wf[j][i] = y + a_star
 				
 				else: # This is case A 
-					next_wf[j][i] = next_wf[j][i-1] #As no more workers are being hired, 
+					if i == 0:
+						next_wf[j][i] = n_eq[j][i]
+					else:
+						next_wf[j][i] = next_wf[j][i-1] #As no more workers are being hired, 
 													#next period workforce is the same as 
 													#for a market with one less worker 	
 									
 		return next_wf
+
+	def workforce_change(self, v=None, stochastic=False):
+		"""
+		Computes the change in workforce size given current
+		workforce and state of demand
+		
+		Parameters
+		----------
+		v : array_like(float, ndim=len(states))
+			The approximate value function. After applying the
+			bellman operator until convergence
+		
+		Returns
+	    -------
+    	wf_change: array_like(float, ndim=len(states))
+        	The next period workforce for each current workforce 
+        	and state of demand
+
+		"""
+		if v == None:
+			v = np.asarray([np.zeros(len(self.grid))]*len(self.states))
+			v = compute_fixed_point(self.bellman_operator, v, verbose=0, max_iter=30)
+		
+		return self.next_workforce(v=v, stochastic=stochastic) - self.grid
+
